@@ -228,6 +228,59 @@ void drawAngle(CvMat* cvMat_M, CvMat* cvMat_Angle)
 	cvReleaseImage(&img_show);
 }
 
+void calBlock(CvMat* cvMat_M, CvMat* cvMat_Angle, double* hogFeature,
+	int startPointX, int startPointY, 
+	int blockSize, int cellSize, int bin)
+{
+	int cellNum = blockSize/cellSize;
+	int point = 0;
+	int stepWidth = bin;
+	for (int i=0; i<cellNum; i++)
+	{
+		for (int j=0; j<cellNum; j++)
+		{
+			CvMat* cvMat_M_cell = cvCreateMat(cellSize,cellSize,CV_64FC1);
+			CvMat* cvMat_Angle_cell = cvCreateMat(cellSize,cellSize,CV_64FC1);
+			for (int y=0; y<cellSize; y++)
+			{
+				for (int x=0; x<cellSize; x++)
+				{
+					double temp = cvmGet( cvMat_M, y+startPointY+i*cellSize, x+startPointX+j*cellSize);
+					cvmSet( cvMat_M_cell, y, x, temp);
+					temp = cvmGet( cvMat_Angle, y+startPointY+i*cellSize, x+startPointX+j*cellSize);
+					cvmSet( cvMat_Angle_cell, y, x, temp);
+					//To record the cell.
+				}
+			}
+
+
+
+
+
+			cvReleaseMat(&cvMat_M_cell);
+			cvReleaseMat(&cvMat_Angle_cell);
+		}
+	}
+}
+
+void calHOG(CvMat* cvMat_M, CvMat* cvMat_Angle, 
+	int blockSize, int blockStrid, int cellSize, int bin) //blockSize should be divided by cellSize.
+{
+	int cellNum = blockSize/cellSize;
+	int BlockNumH = (height-blockSize)/blockStrid + 1;
+	int BlockNumW = (width-blockSize)/blockStrid + 1;
+	for (int i=0; i<BlockNumH; i++)
+	{
+		for (int j=0; j<BlockNumW; j++)
+		{
+			double* hog = new double[bin*cellNum*cellNum];
+			calBlock(cvMat_M, cvMat_Angle, hog, j*blockStrid, i*blockStrid, blockSize, cellSize, bin);
+
+			delete[] hog;
+		}
+	}
+}
+
 int _tmain(int argc, _TCHAR* argv[])
 {
 	CString s_filefolder;
@@ -252,6 +305,8 @@ int _tmain(int argc, _TCHAR* argv[])
 	calMAndAngle(cvMat_Gh, cvMat_Gv, cvMat_M, cvMat_Angle);
 	mat2Image(cvMat_M,img_show);
 	drawAngle(cvMat_M, cvMat_Angle);
+
+	calHOG(cvMat_M, cvMat_Angle, 64, 32, 32, 9);
 
 	cout<<"Done!"<<endl;
 	//getchar();

@@ -9,12 +9,15 @@
 #include <opencv2\opencv.hpp>
 #include <direct.h>
 #include <math.h>
-
+#include <fstream>
 using namespace std;
 using namespace cv;
 
 const int height = 480;
 const int width = 640;
+const double pi = 3.14159;
+const double ep = 0.00001;
+ofstream outfile;
 
 void getAFrame(CvMat* cvMat, double &minDepth, double &maxDepth)
 {
@@ -215,7 +218,7 @@ void drawAngle(CvMat* cvMat_M, CvMat* cvMat_Angle)
 			{
 				length = 0.0;
 			}
-			double angle = cvmGet(cvMat_Angle, y, x) + 1.57;   //+1.57 if for drawing. The reason is unknown.
+			double angle = cvmGet(cvMat_Angle, y, x) + pi/2;   //+1.57 if for drawing. The reason is unknown.
 			CvPoint endP;
 			endP.y = y + length*sin(angle);
 			endP.x = x + length*cos(angle);
@@ -233,7 +236,7 @@ void calBlock(CvMat* cvMat_M, CvMat* cvMat_Angle, double* hogFeature,
 	int blockSize, int cellSize, int bin)
 {
 	int cellNum = blockSize/cellSize;
-	int point = 0;
+	int featurePoint = 0;
 	int stepWidth = bin;
 	for (int i=0; i<cellNum; i++)
 	{
@@ -249,33 +252,76 @@ void calBlock(CvMat* cvMat_M, CvMat* cvMat_Angle, double* hogFeature,
 					cvmSet( cvMat_M_cell, y, x, temp);
 					temp = cvmGet( cvMat_Angle, y+startPointY+i*cellSize, x+startPointX+j*cellSize);
 					cvmSet( cvMat_Angle_cell, y, x, temp);
-					//To record the cell.
 				}
 			}
+			featurePoint = (i*cellNum + j)*bin;
+			for (int k=featurePoint; k<featurePoint+bin; k++)
+			{
+				hogFeature[k] = 0.0;
+			}
+			for (int y=0; y<cellSize; y++)
+			{
+				for (int x=0; x<cellSize; x++)
+				{
+					double angle = cvmGet(cvMat_Angle_cell, y, x);
+					double M = cvmGet(cvMat_M_cell,y, x);
+					if (angle<0)
+					{
+						angle += pi;
+					}
 
-
-
-
-
+					int binNum = angle*bin/pi;
+					hogFeature[featurePoint+binNum] += M;
+				}
+			}
 			cvReleaseMat(&cvMat_M_cell);
 			cvReleaseMat(&cvMat_Angle_cell);
 		}
 	}
 }
 
-void calHOG(CvMat* cvMat_M, CvMat* cvMat_Angle, 
+void calHOG(CvMat* cvMat_M, CvMat* cvMat_Angle, double* hogFeature,
 	int blockSize, int blockStrid, int cellSize, int bin) //blockSize should be divided by cellSize.
 {
 	int cellNum = blockSize/cellSize;
 	int BlockNumH = (height-blockSize)/blockStrid + 1;
 	int BlockNumW = (width-blockSize)/blockStrid + 1;
+	int featurePoint = 0;
 	for (int i=0; i<BlockNumH; i++)
 	{
 		for (int j=0; j<BlockNumW; j++)
 		{
+			featurePoint = (i*BlockNumW + j)*(bin*cellNum*cellNum);
 			double* hog = new double[bin*cellNum*cellNum];
 			calBlock(cvMat_M, cvMat_Angle, hog, j*blockStrid, i*blockStrid, blockSize, cellSize, bin);
 
+			//Normalization in one block.
+			double den = 0.0;
+			//L2 norm
+			for (int k=0; k<bin*cellNum*cellNum; k++)
+			{
+				den += hog[k]*hog[k];
+			}
+			den = sqrt(den + ep*ep);
+			//L1 norm
+// 			for (int k=0; k<bin*cellNum*cellNum; k++)
+// 			{
+// 				den += abs(hog[k]);
+// 			}
+// 			den = den + ep;
+			for (int k=0; k<bin*cellNum*cellNum; k++)
+			{
+				hog[k] /= den;		
+ 				hogFeature[featurePoint + k] = hog[k];
+				//outfile<<hogFeature[featurePoint + k]<<endl;
+			}
+
+// 			double sumHOG = 0.0;
+// 			for (int k=0; k<bin*cellNum*cellNum; k++)
+// 			{
+// 				sumHOG += hog[k];
+// 			}
+// 			cout<<"total: "<<sumHOG<<endl;
 			delete[] hog;
 		}
 	}
@@ -286,6 +332,7 @@ int _tmain(int argc, _TCHAR* argv[])
 	CString s_filefolder;
 	s_filefolder.Format("..\\output");
 	_mkdir(s_filefolder);
+	outfile.open("..\\output\\HOGfeature.csv", ios::out);
 
 	CvMat* cvMat_ori = cvCreateMat(height,width,CV_64FC1);
 	CvMat* cvMat_Gh = cvCreateMat(height,width,CV_64FC1);
@@ -306,10 +353,39 @@ int _tmain(int argc, _TCHAR* argv[])
 	mat2Image(cvMat_M,img_show);
 	drawAngle(cvMat_M, cvMat_Angle);
 
-	calHOG(cvMat_M, cvMat_Angle, 64, 32, 32, 9);
 
+	int blockSize = 64;
+	int blockStrid = 32;
+	int cellSize = 32;
+	int bin = 9;
+	
+	int cellNum = blockSize/cellSize;
+	int BlockNumH = (height-blockSize)/blockStrid + 1;
+	int BlockNumW = (width-blockSize)/blockStrid + 1;
+
+	int dimension = BlockNumH*BlockNumW*bin*cellNum*cellNum;
+	double* hogFeature = new double[dimension];
+	calHOG(cvMat_M, cvMat_Angle, hogFeature, blockSize, blockStrid, cellSize, bin);
+
+	//hogFeature is normalized here. The sum is 1.0;
+	double den = 0.0;
+	for (int k=0; k<dimension; k++)
+	{
+		den += abs(hogFeature[k]);
+	}
+	den = den+ep;
+	for (int k=0; k<dimension; k++)
+	{
+		hogFeature[k] /= den;
+		outfile<<hogFeature[k]<<endl;
+	}
+
+
+
+	delete[] hogFeature;
 	cout<<"Done!"<<endl;
-	//getchar();
+	outfile.close();
+	getchar();
 	return 0;
 }
 
